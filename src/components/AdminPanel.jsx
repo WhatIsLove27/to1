@@ -7,12 +7,14 @@ export default function AdminPanel({ user, onClose, fetchData }) {
   const [products, setProducts] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [newProduct, setNewProduct] = useState({
+    id: null,
     name: '',
     description: '',
     price: '',
     image_url: '',
     category: 'oil'
   });
+  const [isEditing, setIsEditing] = useState(false);
   const [serviceRecord, setServiceRecord] = useState({
     user_id: '',
     car_id: '',
@@ -26,6 +28,7 @@ export default function AdminPanel({ user, onClose, fetchData }) {
   const [cars, setCars] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
 
   useEffect(() => {
     if (activeTab === 'users') {
@@ -76,21 +79,37 @@ export default function AdminPanel({ user, onClose, fetchData }) {
 
   const handleProductSubmit = async (e) => {
     e.preventDefault();
+    
+    if (!newProduct.name || !newProduct.price) {
+      setError('Заполните обязательные поля');
+      return;
+    }
+  
     try {
       setLoading(true);
-      await axios.post('http://localhost:5000/api/admin/products', newProduct);
-      setNewProduct({
-        name: '',
-        description: '',
-        price: '',
-        image_url: '',
-        category: 'oil'
-      });
+      
+      if (isEditing) {
+        // Редактирование существующего товара
+        await axios.put(`http://localhost:5000/api/admin/products/${newProduct.id}`, {
+          ...newProduct,
+          price: parseFloat(newProduct.price)
+        });
+        alert('Товар успешно обновлен!');
+      } else {
+        // Добавление нового товара
+        await axios.post('http://localhost:5000/api/admin/products', {
+          ...newProduct,
+          price: parseFloat(newProduct.price)
+        });
+        alert('Товар успешно добавлен!');
+      }
+      
+      // Сброс формы и обновление списка
+      resetProductForm();
       fetchProducts();
-      alert('Товар успешно добавлен!');
     } catch (err) {
-      console.error('Error adding product:', err);
-      setError(err.response?.data?.message || 'Ошибка при добавлении товара');
+      console.error('Ошибка при сохранении товара:', err);
+      setError(err.response?.data?.message || 'Ошибка при сохранении товара');
     } finally {
       setLoading(false);
     }
@@ -118,6 +137,29 @@ export default function AdminPanel({ user, onClose, fetchData }) {
     } finally {
       setLoading(false);
     }
+  };
+  const resetProductForm = () => {
+    setNewProduct({
+      id: null,
+      name: '',
+      description: '',
+      price: '',
+      image_url: '',
+      category: 'oil'
+    });
+    setIsEditing(false);
+  };
+  const editProduct = (product) => {
+    setNewProduct({
+      id: product.id,
+      name: product.name,
+      description: product.description,
+      price: product.price,
+      image_url: product.image_url,
+      category: product.category
+    });
+    setIsEditing(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const deleteProduct = async (productId) => {
@@ -165,10 +207,10 @@ export default function AdminPanel({ user, onClose, fetchData }) {
 
       {activeTab === 'products' && (
         <div className="admin-section">
-          <h3>Добавить новый товар</h3>
+          <h3>{isEditing ? 'Редактировать товар' : 'Добавить новый товар'}</h3>
           <form onSubmit={handleProductSubmit}>
             <div className="form-group">
-              <label>Название:</label>
+              <label>Название*</label>
               <input
                 type="text"
                 value={newProduct.name}
@@ -177,58 +219,111 @@ export default function AdminPanel({ user, onClose, fetchData }) {
               />
             </div>
             <div className="form-group">
-              <label>Описание:</label>
+              <label>Описание</label>
               <textarea
                 value={newProduct.description}
                 onChange={(e) => setNewProduct({...newProduct, description: e.target.value})}
               />
             </div>
             <div className="form-group">
-              <label>Цена:</label>
+              <label>Цена*</label>
               <input
                 type="number"
+                step="0.01"
+                min="0"
                 value={newProduct.price}
                 onChange={(e) => setNewProduct({...newProduct, price: e.target.value})}
                 required
               />
             </div>
             <div className="form-group">
-              <label>Категория:</label>
+              <label>Ссылка на изображение</label>
+              <input
+                type="url"
+                value={newProduct.image_url}
+                onChange={(e) => setNewProduct({...newProduct, image_url: e.target.value})}
+                placeholder="https://example.com/image.jpg"
+              />
+            </div>
+            <div className="form-group">
+              <label>Категория</label>
               <select
                 value={newProduct.category}
                 onChange={(e) => setNewProduct({...newProduct, category: e.target.value})}
               >
                 <option value="oil">Масло</option>
                 <option value="filter">Фильтр</option>
+                <option value="accessory">Аксессуар</option>
                 <option value="other">Другое</option>
               </select>
             </div>
-            <button type="submit" disabled={loading}>
-              {loading ? 'Добавление...' : 'Добавить товар'}
-            </button>
-          </form>
-
-          <h3>Список товаров</h3>
-          <div className="products-list">
-            {products.map(product => (
-              <div key={product.id} className="product-item">
-                <h4>{product.name}</h4>
-                <p>{product.description}</p>
-                <p>Цена: {product.price} руб.</p>
-                <button 
-                  onClick={() => deleteProduct(product.id)}
+            <div className="form-actions">
+              <button 
+                type="submit" 
+                className="btn btn-primary"
+                disabled={loading}
+              >
+                {loading ? 'Сохранение...' : (isEditing ? 'Сохранить изменения' : 'Добавить товар')}
+              </button>
+              {isEditing && (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={resetProductForm}
                   disabled={loading}
                 >
-                  Удалить
+                  Отмена
                 </button>
-              </div>
-            ))}
-          </div>
+              )}
+            </div>
+          </form>
+
+          {/* Список товаров */}
+          <h3 style={{marginTop: '30px'}}>Список товаров</h3>
+          {products.length === 0 ? (
+            <p className="no-data">Товары отсутствуют</p>
+          ) : (
+            <div className="products-list">
+              {products.map(product => (
+                <div key={product.id} className="product-item">
+                  <div className="product-item-header">
+                    <h4>{product.name}</h4>
+                    <span className="product-item-price">{product.price} руб.</span>
+                  </div>
+                  <p className="product-item-category">Категория: {product.category}</p>
+                  {product.description && (
+                    <p className="product-item-description">{product.description}</p>
+                  )}
+                  {product.image_url && (
+                    <div className="product-item-image">
+                      <img src={product.image_url} alt={product.name} />
+                    </div>
+                  )}
+                  <div className="product-item-actions">
+                    <button
+                      className="btn btn-edit"
+                      onClick={() => editProduct(product)}
+                      disabled={loading}
+                    >
+                      Редактировать
+                    </button>
+                    <button
+                      className="btn btn-danger"
+                      onClick={() => deleteProduct(product.id)}
+                      disabled={loading}
+                    >
+                      Удалить
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
       {activeTab === 'users' && (
-        <div className="admin-section">
+        <div className="admin-section form-group">
           <h3>Поиск пользователей</h3>
           <input
             type="text"
@@ -248,6 +343,7 @@ export default function AdminPanel({ user, onClose, fetchData }) {
                     setActiveTab('service');
                   }}
                   disabled={loading}
+                  className='btn-product'
                 >
                   Добавить сервис
                 </button>
@@ -335,7 +431,7 @@ export default function AdminPanel({ user, onClose, fetchData }) {
                 onChange={(e) => setServiceRecord({...serviceRecord, notes: e.target.value})}
               />
             </div>
-            <button type="submit" disabled={loading}>
+            <button type="submit" disabled={loading} className='btn-admin'>
               {loading ? 'Сохранение...' : 'Сохранить запись'}
             </button>
           </form>

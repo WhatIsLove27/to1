@@ -1,25 +1,37 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import AdminPanel from './AdminPanel'; // Импортируем компонент админ-панели
+import AdminPanel from './AdminPanel';
 
 export default function AccountModal({ isOpen, onClose, user }) {
   const [cars, setCars] = useState([]);
   const [history, setHistory] = useState([]);
+  const [serviceBook, setServiceBook] = useState([]);
   const [newCar, setNewCar] = useState({
     model: '',
     year: '',
     number: ''
   });
+  const [newServiceRecord, setNewServiceRecord] = useState({
+    car_id: '',
+    service_date: new Date().toISOString().split('T')[0],
+    mileage: '',
+    recommended_mileage: '',
+    oil_type: '',
+    filters_changed: '',
+    notes: ''
+  });
   const [loading, setLoading] = useState({
     cars: false,
     history: false,
+    serviceBook: false,
     addCar: false,
+    addServiceRecord: false,
     removeCar: {},
-    removeHistory: {}
+    removeHistory: {},
+    removeServiceRecord: {}
   });
   const [error, setError] = useState('');
 
-  // Проверяем, является ли пользователь администратором
   const isAdmin = user?.username === 'admin' && user?.id === 0;
 
   useEffect(() => {
@@ -30,29 +42,30 @@ export default function AccountModal({ isOpen, onClose, user }) {
 
   const fetchData = async () => {
     try {
-      setLoading(prev => ({ ...prev, cars: true, history: true }));
+      setLoading(prev => ({ ...prev, cars: true, history: true, serviceBook: true }));
       setError('');
       
       const requests = [
         axios.get(`http://localhost:5000/api/users/${user.id}/cars`),
-        axios.get(`http://localhost:5000/api/users/${user.id}/history`)
+        axios.get(`http://localhost:5000/api/users/${user.id}/history`),
+        axios.get(`http://localhost:5000/api/users/${user.id}/service-book`)
       ];
       
       if (isAdmin) {
-        // Для администратора загружаем дополнительные данные
         requests.push(axios.get('http://localhost:5000/api/admin/users'));
         requests.push(axios.get('http://localhost:5000/api/admin/products'));
       }
       
-      const [carsResponse, historyResponse] = await Promise.all(requests);
+      const [carsResponse, historyResponse, serviceBookResponse] = await Promise.all(requests);
       
       setCars(carsResponse.data);
       setHistory(historyResponse.data);
+      setServiceBook(serviceBookResponse.data);
     } catch (err) {
       console.error('Ошибка при загрузке данных:', err);
       setError('Не удалось загрузить данные. Пожалуйста, попробуйте позже.');
     } finally {
-      setLoading(prev => ({ ...prev, cars: false, history: false }));
+      setLoading(prev => ({ ...prev, cars: false, history: false, serviceBook: false }));
     }
   };
 
@@ -61,6 +74,14 @@ export default function AccountModal({ isOpen, onClose, user }) {
     setNewCar(prev => ({
       ...prev,
       [name]: name === 'year' ? parseInt(value) || '' : value
+    }));
+  };
+
+  const handleServiceRecordChange = (e) => {
+    const { name, value } = e.target;
+    setNewServiceRecord(prev => ({
+      ...prev,
+      [name]: name.includes('mileage') ? parseInt(value) || '' : value
     }));
   };
 
@@ -82,6 +103,40 @@ export default function AccountModal({ isOpen, onClose, user }) {
       setError(err.response?.data?.message || 'Ошибка при добавлении автомобиля');
     } finally {
       setLoading(prev => ({ ...prev, addCar: false }));
+    }
+  };
+
+  const addServiceRecord = async () => {
+    if (!newServiceRecord.car_id || !newServiceRecord.oil_type) {
+      setError('Заполните обязательные поля (автомобиль и тип масла)');
+      return;
+    }
+
+    try {
+      setLoading(prev => ({ ...prev, addServiceRecord: true }));
+      setError('');
+
+      const recordToAdd = {
+        ...newServiceRecord,
+        user_id: user.id
+      };
+
+      const response = await axios.post('http://localhost:5000/api/admin/service-book', recordToAdd);
+      setServiceBook(prev => [...prev, response.data]);
+      setNewServiceRecord({
+        car_id: '',
+        service_date: new Date().toISOString().split('T')[0],
+        mileage: '',
+        recommended_mileage: '',
+        oil_type: '',
+        filters_changed: '',
+        notes: ''
+      });
+    } catch (err) {
+      console.error('Ошибка при добавлении записи:', err);
+      setError(err.response?.data?.message || 'Ошибка при добавлении записи');
+    } finally {
+      setLoading(prev => ({ ...prev, addServiceRecord: false }));
     }
   };
 
@@ -115,9 +170,54 @@ export default function AccountModal({ isOpen, onClose, user }) {
     }
   };
 
+  const removeServiceRecord = async (recordId) => {
+    if (!window.confirm('Вы уверены, что хотите удалить эту запись из сервисной книжки?')) return;
+  
+    try {
+      setLoading(prev => ({ 
+        ...prev, 
+        removeServiceRecord: { ...prev.removeServiceRecord, [recordId]: true } 
+      }));
+      setError('');
+  
+      // Отправляем запрос на удаление
+      const response = await axios.delete(
+        `http://localhost:5000/api/admin/service-book/${recordId}`,
+        {
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          validateStatus: (status) => status === 204 || status === 404
+        }
+      );
+  
+      if (response.status === 204) {
+        // Успешное удаление - обновляем состояние
+        setServiceBook(prev => prev.filter(record => record.id !== recordId));
+      } else if (response.status === 404) {
+        setError('Запись уже была удалена');
+        await fetchData(); // Перезагружаем данные
+      }
+    } catch (err) {
+      console.error('Ошибка удаления:', err);
+      setError(err.response?.data?.message || 
+               err.response?.data?.details || 
+               'Ошибка при удалении записи');
+      
+      // Если ошибка 404, обновляем данные
+      if (err.response?.status === 404) {
+        await fetchData();
+      }
+    } finally {
+      setLoading(prev => ({ 
+        ...prev, 
+        removeServiceRecord: { ...prev.removeServiceRecord, [recordId]: false } 
+      }));
+    }
+  };
+
   if (!isOpen || !user) return null;
 
-  // Если пользователь - администратор, показываем админ-панель
   if (isAdmin) {
     return (
       <div className="modal-overlay">
@@ -146,7 +246,6 @@ export default function AccountModal({ isOpen, onClose, user }) {
     );
   }
 
-  // Обычный личный кабинет для пользователей
   return (
     <div className="modal-overlay">
       <div className="modal-content">
@@ -165,138 +264,309 @@ export default function AccountModal({ isOpen, onClose, user }) {
         
         {error && <div className="error-message">{error}</div>}
         
-        <div className="account-section">
-          <div className="account-info">
-            <h3>Ваши данные</h3>
-            <div className="info-grid">
-              <div className="info-item">
-                <span className="info-label">ФИО:</span>
-                <span className="info-value">{user.name}</span>
-              </div>
-              <div className="info-item">
-                <span className="info-label">Логин:</span>
-                <span className="info-value">{user.username}</span>
+        <div className="account-sections-container">
+          <div className="account-section">
+            <div className="account-info">
+              <h3>Ваши данные</h3>
+              <div className="info-grid">
+                <div className="info-item">
+                  <span className="info-label">ФИО:</span>
+                  <span className="info-value">{user.name}</span>
+                </div>
+                <div className="info-item">
+                  <span className="info-label">Логин:</span>
+                  <span className="info-value">{user.username}</span>
+                </div>
               </div>
             </div>
-          </div>
-          
-          <div className="account-section">
-            <h3>Ваши автомобили</h3>
             
-            {loading.cars ? (
-              <div className="loading">Загрузка автомобилей...</div>
-            ) : cars.length === 0 ? (
-              <p className="no-data">У вас пока нет автомобилей</p>
-            ) : (
+            <div className="form-section">
+              <br />
+              <h3>Ваши автомобили</h3>
+              
               <div className="car-list">
-                {cars.map(car => (
-                  <div className="car-item" key={car.id}>
-                    <div className="car-info">
-                      <div className="car-model">{car.model}</div>
-                      <div className="car-details">
-                        {car.year} год · {car.number}
+                {loading.cars ? (
+                  <div className="loading">Загрузка автомобилей...</div>
+                ) : cars.length === 0 ? (
+                  <p className="no-data">У вас нет добавленных автомобилей</p>
+                ) : (
+                  cars.map(car => (
+                    <div className="car-item" key={car.id}>
+                      <div>
+                        <p><strong>{car.model}</strong> ({car.year})</p>
+                        <p>{car.number}</p>
                       </div>
+                      <button 
+                        className="btn btn-danger"
+                        onClick={() => removeCar(car.id)}
+                        disabled={loading.removeCar[car.id]}
+                      >
+                        {loading.removeCar[car.id] ? 'Удаление...' : 'Удалить'}
+                      </button>
                     </div>
-                    <button 
-                      className="btn btn-danger car-remove"
-                      onClick={() => removeCar(car.id)}
-                      disabled={loading.removeCar[car.id]}
-                    >
-                      {loading.removeCar[car.id] ? 'Удаление...' : 'Удалить'}
-                    </button>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
-            )}
-            
-            <div className="add-car-form">
-              <h4>Добавить автомобиль</h4>
-              <div className="form-grid">
-                <div className="form-group">
-                  <label>Модель</label>
-                  <input
-                    type="text"
-                    name="model"
-                    value={newCar.model}
-                    onChange={handleCarChange}
-                    placeholder="Например: Toyota Camry"
-                  />
-                </div>
-                
-                <div className="form-group">
-                  <label>Год выпуска</label>
-                  <input
-                    type="number"
-                    name="year"
-                    value={newCar.year}
-                    onChange={handleCarChange}
-                    placeholder="Например: 2020"
-                    min="1900"
-                    max={new Date().getFullYear()}
-                  />
-                </div>
-                
-                <div className="form-group">
-                  <label>Гос. номер</label>
-                  <input
-                    type="text"
-                    name="number"
-                    value={newCar.number}
-                    onChange={handleCarChange}
-                    placeholder="Например: А123БВ777"
-                  />
-                </div>
+              
+              <div className="form-group">
+                <label className="form-label">Модель автомобиля</label>
+                <input
+                  type="text"
+                  name="model"
+                  value={newCar.model}
+                  onChange={handleCarChange}
+                  className="form-input"
+                  placeholder="Например: Toyota Camry"
+                />
+              </div>
+              
+              <div className="form-group">
+                <label className="form-label">Год выпуска</label>
+                <input
+                  type="number"
+                  name="year"
+                  value={newCar.year}
+                  onChange={handleCarChange}
+                  className="form-input"
+                  placeholder="Например: 2020"
+                />
+              </div>
+              
+              <div className="form-group">
+                <label className="form-label">Гос. номер</label>
+                <input
+                  type="text"
+                  name="number"
+                  value={newCar.number}
+                  onChange={handleCarChange}
+                  className="form-input"
+                  placeholder="Например: А123БВ777"
+                />
               </div>
               
               <button 
-                className="btn btn-primary"
+                type="button" 
+                className="btn btn-primary" 
                 onClick={addCar}
-                disabled={loading.addCar || !newCar.model || !newCar.year || !newCar.number}
+                disabled={loading.addCar}
               >
                 {loading.addCar ? 'Добавление...' : 'Добавить автомобиль'}
               </button>
             </div>
           </div>
-          
+
           <div className="account-section">
-            <h3>История обслуживания</h3>
+            <br />
+            <h3>Добавить запись в сервисную книжку</h3>
             
+            <div className="form-group">
+              <label className="form-label">Автомобиль*</label>
+              <select
+                name="car_id"
+                value={newServiceRecord.car_id}
+                onChange={handleServiceRecordChange}
+                className="form-input"
+                required
+              >
+                <option value="">Выберите автомобиль</option>
+                {cars.map(car => (
+                  <option key={car.id} value={car.id}>
+                    {car.model} ({car.number})
+                  </option>
+                ))}
+              </select>
+            </div>
+            
+            <div className="form-group">
+              <label className="form-label">Дата обслуживания</label>
+              <input
+                type="date"
+                name="service_date"
+                value={newServiceRecord.service_date}
+                onChange={handleServiceRecordChange}
+                className="form-input"
+                required
+              />
+            </div>
+            
+            <div className="form-group">
+              <label className="form-label">Пробег (км)*</label>
+              <input
+                type="number"
+                name="mileage"
+                value={newServiceRecord.mileage}
+                onChange={handleServiceRecordChange}
+                className="form-input"
+                placeholder="Текущий пробег"
+                required
+              />
+            </div>
+            
+            <div className="form-group">
+              <label className="form-label">Рекомендуемый пробег (км)*</label>
+              <input
+                type="number"
+                name="recommended_mileage"
+                value={newServiceRecord.recommended_mileage}
+                onChange={handleServiceRecordChange}
+                className="form-input"
+                placeholder="Следующее обслуживание"
+                required
+              />
+            </div>
+            
+            <div className="form-group">
+              <label className="form-label">Тип масла*</label>
+              <input
+                type="text"
+                name="oil_type"
+                value={newServiceRecord.oil_type}
+                onChange={handleServiceRecordChange}
+                className="form-input"
+                placeholder="Например: 5W-30"
+                required
+              />
+            </div>
+            
+            <div className="form-group">
+              <label className="form-label">Замененные фильтры*</label>
+              <input
+                type="text"
+                name="filters_changed"
+                value={newServiceRecord.filters_changed}
+                onChange={handleServiceRecordChange}
+                className="form-input"
+                placeholder="Например: масляный, воздушный"
+                required
+              />
+            </div>
+            
+            <div className="form-group">
+              <label className="form-label">Примечания</label>
+              <textarea
+                name="notes"
+                value={newServiceRecord.notes}
+                onChange={handleServiceRecordChange}
+                className="form-input"
+                placeholder="Дополнительная информация"
+                rows="3"
+              />
+            </div>
+            
+            <button 
+              type="button" 
+              className="btn btn-primary" 
+              onClick={addServiceRecord}
+              disabled={loading.addServiceRecord}
+            >
+              {loading.addServiceRecord ? 'Добавление...' : 'Добавить запись'}
+            </button>
+          </div>
+
+          <div className="account-section">
+            <br />
+            <h3>Сервисная книжка</h3>
+            {loading.serviceBook ? (
+              <div className="loading">Загрузка сервисной книжки...</div>
+            ) : serviceBook.length === 0 ? (
+              <p className="no-data">В вашей сервисной книжке пока нет записей</p>
+            ) : (
+              <div className="service-book-list">
+                {serviceBook.map(record => {
+                  const car = cars.find(c => c.id === record.car_id) || {};
+                  return (
+                    <div className="service-record" key={record.id}>
+                      <div className="record-header">
+                        <span className="record-date">
+                          {new Date(record.service_date).toLocaleDateString()}
+                        </span>
+                        <span className="record-mileage">
+                          Пробег: {record.mileage} км
+                        </span>
+                      </div>
+                      <div className="record-car">
+                        {car.model} ({car.number})
+                      </div>
+                      <div className="record-details">
+                        <div>
+                          <span className="detail-label">Масло:</span>
+                          <span>{record.oil_type}</span>
+                        </div>
+                        <div>
+                          <span className="detail-label">Фильтры:</span>
+                          <span>{record.filters_changed}</span>
+                        </div>
+                        <div>
+                          <span className="detail-label">Следующее ТО:</span>
+                          <span>{record.recommended_mileage} км</span>
+                        </div>
+                        {record.notes && (
+                          <div>
+                            <span className="detail-label">Примечания:</span>
+                            <span>{record.notes}</span>
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        className="btn btn-danger"
+                        onClick={() => removeServiceRecord(record.id)}
+                        disabled={loading.removeServiceRecord[record.id]}
+                      >
+                        {loading.removeServiceRecord[record.id] ? 'Удаление...' : 'Удалить запись'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="account-section">
+            <br />
+            <h3>Запись на замену масла</h3>
             {loading.history ? (
               <div className="loading">Загрузка истории...</div>
             ) : history.length === 0 ? (
               <p className="no-data">У вас еще не было замен масла</p>
             ) : (
               <div className="history-list">
-                {history.map(record => (
-                  <div className="history-item" key={record.id}>
-                    <div className="history-header">
-                      <span className="history-date">
-                        {new Date(record.date).toLocaleDateString()} в {record.time}
-                      </span>
-                      <span className="history-price">{record.total_price} руб.</span>
-                    </div>
-                    <div className="history-car">
-                      {record.car_model} ({record.car_number})
-                    </div>
-                    <div className="history-details">
-                      <div>
-                        <span className="detail-label">Услуга:</span>
-                        <span>{record.service_type}</span>
+                {history.map(record => {
+                  const car = cars.find(c => c.id === record.car_id) || {};
+                  return (
+                    <div className="history-item" key={record.id}>
+                      <div className="history-header">
+                        <span className="history-date">
+                          {new Date(record.date).toLocaleDateString()} в {record.time}
+                        </span>
+                        
                       </div>
-                      <div>
-                        <span className="detail-label">Масло:</span>
-                        <span>{record.oil_type}</span>
+                      <div className="history-car">
+                        {car.model} ({car.number})
                       </div>
+                      <div className="history-details">
+                        <div>
+                          <span className="detail-label">Услуга:</span>
+                          <span>{record.service_type}</span>
+                        </div>
+                        <div>
+                          <span className="detail-label">Масло:</span>
+                          <span>{record.oil_type}</span>
+                        </div>
+                      </div>
+                      <div className='price-text'>
+                        <span className="history-price">{record.total_price} руб.</span>
+
+                      </div> 
+                      <button
+                        className="btn btn-danger"
+                        onClick={() => removeHistoryItem(record.id)}
+                        disabled={loading.removeHistory[record.id]}
+                      >
+                        {loading.removeHistory[record.id] ? 'Удаление...' : 'Удалить запись'}
+                      </button>
                     </div>
-                    <button
-                      className="btn btn-danger history-remove"
-                      onClick={() => removeHistoryItem(record.id)}
-                      disabled={loading.removeHistory[record.id]}
-                    >
-                      {loading.removeHistory[record.id] ? 'Удаление...' : 'Удалить запись'}
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

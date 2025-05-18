@@ -200,12 +200,19 @@ app.get('/api/admin/users', async (req, res) => {
   }
 });
 app.post('/api/admin/products', async (req, res) => {
+  const { name, description, price, image_url, category } = req.body;
+  
+  if (!name || !price) {
+    return res.status(400).json({ message: 'Название и цена обязательны' });
+  }
+
   try {
-    const { name, description, price, image_url, category } = req.body;
     const result = await pool.query(
-      `INSERT INTO products (name, description, price, image_url, category)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [name, description, price, image_url, category]
+      `INSERT INTO products 
+       (name, description, price, image_url, category)
+       VALUES ($1, $2, $3, $4, $5) 
+       RETURNING id, name, description, price, image_url, category`,
+      [name, description, parseFloat(price), image_url, category]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -229,7 +236,40 @@ app.post('/api/admin/service-book', async (req, res) => {
     res.status(500).json({ message: 'Ошибка добавления записи' });
   }
 });
+app.delete('/api/admin/service-book/:id', async (req, res) => {
+  console.log(`Попытка удаления записи с ID: ${req.params.id}`);
+  
+  try {
+    console.log('Проверка существования записи...');
+    const checkResult = await pool.query(
+      'SELECT id FROM service_book WHERE id = $1', 
+      [req.params.id]
+    );
+    
+    console.log(`Результат проверки: ${checkResult.rows.length} записей`);
+    
+    if (checkResult.rows.length === 0) {
+      console.log('Запись не найдена');
+      return res.status(404).json({ message: 'Запись не найдена' });
+    }
 
+    console.log('Удаление записи...');
+    await pool.query('DELETE FROM service_book WHERE id = $1', [req.params.id]);
+    console.log('Удаление успешно');
+    res.status(204).send();
+  } catch (err) {
+    console.error('Полная ошибка:', {
+      message: err.message,
+      stack: err.stack,
+      query: err.query,
+      parameters: err.parameters
+    });
+    res.status(500).json({ 
+      message: 'Ошибка при удалении записи',
+      details: err.message 
+    });
+  }
+});
 // Получение автомобилей пользователя
 app.get('/api/users/:userId/cars', async (req, res) => {
   const { userId } = req.params;
@@ -245,6 +285,46 @@ app.get('/api/users/:userId/cars', async (req, res) => {
     res.status(500).json({ message: 'Ошибка получения автомобилей' });
   }
 });
+//СЕРВИС
+// Добавляем в server.js
+const serviceBook = []; // Временное хранилище (в реальном приложении используйте БД)
+
+// Эндпоинт для получения сервисной книжки пользователя
+app.get('/api/users/:userId/service-book', (req, res) => {
+  const userId = parseInt(req.params.userId);
+  const userServiceBook = serviceBook.filter(record => record.userId === userId);
+  res.json(userServiceBook);
+});
+
+// Эндпоинт для добавления записи в сервисную книжку
+app.post('/api/service-book', (req, res) => {
+  const newRecord = {
+    id: Date.now(),
+    userId: req.body.userId,
+    carId: req.body.carId,
+    date: req.body.date,
+    mileage: req.body.mileage,
+    serviceType: req.body.serviceType,
+    description: req.body.description,
+    cost: req.body.cost
+  };
+  serviceBook.push(newRecord);
+  res.status(201).json(newRecord);
+});
+
+// Эндпоинт для удаления записи
+app.delete('/api/service-book/:recordId', (req, res) => {
+  const recordId = parseInt(req.params.recordId);
+  const index = serviceBook.findIndex(record => record.id === recordId);
+  
+  if (index !== -1) {
+    serviceBook.splice(index, 1);
+    res.status(204).send();
+  } else {
+    res.status(404).json({ message: 'Запись не найдена' });
+  }
+});
+
 
 // Добавление автомобиля
 app.post('/api/users/:userId/cars', async (req, res) => {
@@ -326,9 +406,44 @@ app.post('/api/bookings', async (req, res) => {
 });
 
 //товар
+app.put('/api/admin/products/:id', async (req, res) => {
+  const { id } = req.params;
+  const { name, description, price, image_url, category } = req.body;
+  
+  if (!name || !price) {
+    return res.status(400).json({ message: 'Название и цена обязательны' });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE products SET 
+        name = $1,
+        description = $2,
+        price = $3,
+        image_url = $4,
+        category = $5
+       WHERE id = $6
+       RETURNING id, name, description, price, image_url, category`,
+      [name, description, parseFloat(price), image_url, category, id]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Товар не найден' });
+    }
+    
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Ошибка обновления товара' });
+  }
+});
 app.get('/api/products', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM products');
+    const result = await pool.query(`
+      SELECT id, name, description, price, image_url, category 
+      FROM products 
+      ORDER BY name
+    `);
     res.json(result.rows);
   } catch (err) {
     console.error(err);
